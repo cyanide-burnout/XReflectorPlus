@@ -18,7 +18,7 @@
 CC = gcc
 CXX = g++
 
-FLAGS = -g -rdynamic -O3 $(shell pkg-config --cflags sqlite3 libconfig)
+FLAGS = -g -rdynamic -O3 $(shell pkg-config --cflags libconfig)
 CFLAGS += $(FLAGS)
 CXXFLAGS += $(FLAGS)
 
@@ -27,7 +27,7 @@ OBJECTS = \
     MySQLStore.o StoreFactory.o DDBClient.o \
     ReportTools.o CallSync.o
 
-LIBS = -lstdc++ -lbsd -lircclient -lmysqlclient $(shell pkg-config --libs sqlite3 libconfig)
+LIBS = -lstdc++ -lbsd -lircclient -lmysqlclient $(shell pkg-config --libs libconfig)
 
 all: clean build
 

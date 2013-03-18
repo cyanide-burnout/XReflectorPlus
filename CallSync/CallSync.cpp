@@ -37,8 +37,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "DStar.h"
 #include "DDBClient.h"
-#include "MySQLStore.h"
-#include "SQLiteStore.h"
 #include "StoreFactory.h"
 #include "ReportTools.h"
 #include "StringTools.h"

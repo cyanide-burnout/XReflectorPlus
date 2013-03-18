@@ -18,7 +18,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "StoreFactory.h"
+#ifdef USE_SQLITE3
 #include "SQLiteStore.h"
+#endif
 #include "MySQLStore.h"
 #ifdef USE_HANDLERSOCKET
 #include "HSStore.h"

@@ -12,7 +12,7 @@
 
   Requirements:
   - MySQL with HandlerSocket plugin
-  - sqlite3-dev, libircclient-dev, libconfig-dev, libmysql-dev, hsclient
+  - libircclient-dev, libconfig-dev, libmysql-dev, hsclient
 
   Package contents:
 
@@ -46,4 +46,4 @@
   dxrfd
 
   * Data - Key-Value materialized view for BTREE emulation
-  * Remotes - materialized view of Gateways and Spots table, required for dxrfd 3.x and dxrfd 2.90 with multimode NAT support
+  * Remotes - materialized view of Gateways and Spots table, required for dxrfd 3.x and dxrfd 2.90
