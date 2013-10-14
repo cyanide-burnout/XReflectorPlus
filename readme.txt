@@ -16,12 +16,20 @@
 
   Package contents:
 
-  dxrfd-290hs - modified version of KI4LKF's dxrfd 2.90. This is most stable package recomended to use.
+  dxrfd-290 - parts of original code of dxrfd 2.90
 
-  dxrfd-310 - modified version of KI4LKF's dxrfd 3.10. This version still in investigation.
-    KI4LKF made changes in DExtra keep-alive format that is not supported by most software.
-    Fixed version works unstable in production environment. We not yet recomend use it.
-    REMOVED FROM DISTRIBUTION!
+  dxrfd-290hs - modified version of KI4LKF's dxrfd 2.90. This version uses HandlerSocket to
+    access MySQL database.
+
+  dxrfd-311 - full original version of KI4LKF's dxrfd 3.11. This version supports only new
+    type of Keep-Alives (10 bytes).
+
+  dxrfd-311dm - modified version of KI4LKF's dxrfd 3.11 (Double Mode). This version supports
+    two verions of Keep-Alive messages (9 bytes and 10 bytes). KI4LKF made changes in DExtra
+    keep-alive format that is not supported by most software.
+
+  dxrfd-311hs - modified version of KI4LKF's dxrfd 3.11 based on code of dxrfd-311dm.
+    This version uses HandlerSocket to access MySQL database.
 
   CallSync - ircDDB data collector. It is required for authorization feature of XReflectorPlus.
     Software based on code of my BorderGate so it's code quality not best but that works.
@@ -30,20 +38,18 @@
 
   Data model:
 
-  CallSync (ircDDB data replica)
+  Global and Local databses (ircDDB data replica)
+  Please deploy this schemas from Data/DDB-MySQL.sql
 
   * Tables - persistent store of ircDDB tables data
   * Users - IRC (ircDDB) user sessions
-
-  Self-Care Web Portal
-
-  * Spots - self-registered hot-spots
-
-  Dashboard
-
   * Gateways - materialized view of registered gateways (represented data of Users table)
 
-  dxrfd
+  XReflectorPlus database
+  Please deploay this schema from Data/XReflectorPlus-MySQL.sql
+
+  * Spots - self-registered hot-spots
+  * Gateways - materialized view of registered gateways (represented data of Users table)
 
   * Data - Key-Value materialized view for BTREE emulation
   * Remotes - materialized view of Gateways and Spots table, required for dxrfd 3.x and dxrfd 2.90

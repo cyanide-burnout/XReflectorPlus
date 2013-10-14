@@ -28,6 +28,14 @@ CREATE TABLE Spots
   PRIMARY KEY(`Call`)
 );
 
+CREATE TABLE Locks
+(
+  `Call` CHAR(8) NOT NULL,
+  `Reason` INTEGER DEFAULT 0,
+  `Expires` DATETIME DEFAULT NULL,
+  PRIMARY KEY(`Call`)
+);
+
 CREATE TABLE Tables
 (
   `Table` INTEGER NOT NULL,
@@ -47,12 +55,15 @@ CREATE TABLE Users
 );
 
 CREATE INDEX TableDate ON Tables (`Table`, `Date`);
+CREATE INDEX LockExpires ON Locks (`Expires`);
 
 delimiter //
 
 CREATE TRIGGER RegisterCall AFTER INSERT ON Tables FOR EACH ROW
 BEGIN
-  IF (NEW.`Table` = 0) AND (NEW.Call1 NOT IN (SELECT `Key` FROM Data)) THEN
+  IF (NEW.`Table` = 0) AND
+     (NEW.Call1 NOT IN (SELECT `Key` FROM Data)) AND
+     (NEW.Call1 NOT IN (SELECT SUBSTR(CONCAT(UPPER(`Call`), '        '), 1, 8) FROM Locks)) THEN
     INSERT
       INTO Data (`Key`, `Value`)
       VALUES (NEW.`Call1`, '');
@@ -89,6 +100,13 @@ BEGIN
   REPLACE
     INTO Remotes (`Call`, `Address`, `NAT`)
     VALUES (SUBSTR(CONCAT(NEW.Call, '        '), 1, 8), NEW.Address, 1);
+END;
+//
+
+CREATE TRIGGER RegisterLock AFTER INSERT ON Locks FOR EACH ROW
+BEGIN
+  DELETE FROM Data
+    WHERE `Key` = SUBSTR(CONCAT(UPPER(NEW.`Call`), '        '), 1, 8);
 END;
 //
 
