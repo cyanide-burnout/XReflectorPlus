@@ -17,25 +17,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 */
 
-#ifndef MYSQLSTORE_H
-#define MYSQLSTORE_H
+#ifndef SQLITESTORE_H
+#define SQLITESTORE_H
 
 #include <stdarg.h>
-#include <mysql/mysql.h>
+#include <sqlite3.h>
 #include <netinet/in.h>
 
 #include "DDBClient.h"
 
 #define PREPARED_STATEMENT_COUNT  10
 
-class MySQLStore : public DDBClient::Store
+class SQLiteStore : public DDBClient::Store
 {
   public:
 
     typedef void (*ReportHandler)(int priority, const char* format, va_list arguments);
 
-    MySQLStore(const char* file);
-    ~MySQLStore();
+    SQLiteStore(const char* file);
+    ~SQLiteStore();
 
     bool checkConnectionError();
 
@@ -56,15 +56,12 @@ class MySQLStore : public DDBClient::Store
 
     ReportHandler onReport;
 
-  protected:
+  private:
 
-    MYSQL* connection;
-    MYSQL_STMT* statements[PREPARED_STATEMENT_COUNT];
+    sqlite3* connection;
+    sqlite3_stmt* statements[PREPARED_STATEMENT_COUNT];
 
     void report(int priority, const char* format, ...);
-
-    MYSQL_BIND* bind(int count, va_list* arguments);
-    bool execute(int index, int count1, int count2, ...);
 };
 
 #endif

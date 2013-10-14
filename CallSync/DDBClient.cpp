@@ -45,6 +45,7 @@ DDBClient::DDBClient(Store* store,
   attempt(0),
   number(0),
   bot(NULL),
+  alias(NULL),
   state(0)
 {
   this->server = strdup(server);
@@ -57,7 +58,7 @@ DDBClient::DDBClient(Store* store,
 
   handlers.event_connect = handleConnect;
   handlers.event_join = handleJoin;
-  handlers.event_quit = handleJoin;
+  handlers.event_quit = handleQuit;
   handlers.event_privmsg = handlePrivateMessage;
   handlers.event_channel = handlePrivateMessage;
   handlers.event_numeric = handleEventCode;
@@ -75,6 +76,7 @@ DDBClient::~DDBClient()
   free(name);
   free(password);
   free(version);
+  free(alias);
   free(bot);
 }
 
@@ -100,8 +102,8 @@ char* DDBClient::generateNick()
 
 void DDBClient::connect()
 {
-  char* delimeter = strchr(name, '-');
-  if (delimeter == NULL)
+  char* delimiter = strchr(name, '-');
+  if (delimiter == NULL)
   {
     char* nick = generateNick();
     irc_connect(session, server, port, password, nick, name, version);
@@ -110,7 +112,7 @@ void DDBClient::connect()
   }
   else
   {
-    char* user = delimeter + 1;
+    char* user = delimiter + 1;
     irc_connect(session, server, port, password, name, user, version);
     report(LOG_INFO, "%s: connecting as %s\n", server, name);
   }
@@ -128,6 +130,12 @@ void DDBClient::sendCommand(const char* command)
   if (bot != NULL)
     irc_cmd_msg(session, bot, command);
   pthread_mutex_unlock(&lock);
+}
+
+void DDBClient::setConnectedServer(const char* server)
+{
+  free(alias);
+  alias = strdup(server);
 }
 
 void DDBClient::publishHeard(const struct DStarRoute& route, const char* addressee, const char* text)
@@ -200,17 +208,23 @@ void DDBClient::touch(time_t now)
   free(command);
 }
 
-void DDBClient::storeUser(const char* nick, const char* name, const char* address)
+void DDBClient::storeUserServer(const char* nick, const char* server)
 {
-  store->storeUser(nick, name, address);
+  store->storeUserServer(nick, server);
 
-  if (strncmp(nick, "s-", 2) == 0)
+  if ((strncmp(nick, "s-", 2) == 0) &&
+      ((bot == NULL) || (strcmp(server, alias) == 0)))
   {
     pthread_mutex_lock(&lock);
     free(bot);
     bot = strdup(nick);
     pthread_mutex_unlock(&lock);
   }
+}
+
+void DDBClient::storeUser(const char* nick, const char* name, const char* address)
+{
+  store->storeUser(nick, name, address);
 
   report(LOG_DEBUG, "%s: JOIN %s\n", server, nick);
 }
@@ -223,7 +237,7 @@ void DDBClient::removeUser(const char* nick)
   {
     pthread_mutex_lock(&lock);
     free(bot);
-    bot = store->findActiveBot();
+    bot = store->findActiveBot(server);
     pthread_mutex_unlock(&lock);
   }
 
@@ -298,11 +312,20 @@ void DDBClient::handleJoin(irc_session_t* session, const char* event, const char
     *separator2 = '\0';
     char* name = separator1 + 1;
     char* address = separator2 + 1;
+    self->storeUser(nick, name, address);
+    irc_cmd_whois(session, nick);
+  }
+}
 
-    if (strcmp(event, "JOIN") == 0)
-      self->storeUser(nick, name, address);
-    if (strcmp(event, "QUIT") == 0)
-      self->removeUser(nick);
+void DDBClient::handleQuit(irc_session_t* session, const char* event, const char* origin, const char** parameters, unsigned int count)
+{
+  DDBClient* self = (DDBClient*)irc_get_ctx(session);
+  char* nick = const_cast<char*>(origin);
+  char* separator = strchr(nick, '!');
+  if (separator != NULL)
+  {
+    *separator = '\0';
+    self->removeUser(nick);
   }
 }
 
@@ -310,7 +333,7 @@ void DDBClient::handlePrivateMessage(irc_session_t* session, const char* event, 
 {
   DDBClient* self = (DDBClient*)irc_get_ctx(session);
   if ((count > 1) && (strncmp(origin, "s-", 2) == 0))
-  {
+  {	
     if (strncmp(parameters[1], "IRCDDB", 6) == 0)
     {
       // Do nothing
@@ -367,6 +390,10 @@ void DDBClient::handleEventCode(irc_session_t* session, unsigned int event, cons
   DDBClient* self = (DDBClient*)irc_get_ctx(session);
   switch (event)
   {
+    case LIBIRC_RFC_RPL_MYINFO:
+      self->setConnectedServer(parameters[1]);
+      break;
+
     case LIBIRC_RFC_RPL_NAMREPLY:
       break;
 
@@ -375,12 +402,16 @@ void DDBClient::handleEventCode(irc_session_t* session, unsigned int event, cons
       break;
 
     case LIBIRC_RFC_RPL_WHOREPLY:
-      if (count > 6)
-        self->storeUser(parameters[5], parameters[2], parameters[3]);
+      self->storeUser(parameters[5], parameters[2], parameters[3]);
+      self->storeUserServer(parameters[5], parameters[4]);
       break;
 
     case LIBIRC_RFC_RPL_ENDOFWHO:
       self->requestForUpdate();
+      break;
+
+    case LIBIRC_RFC_RPL_WHOISSERVER:
+      self->storeUserServer(parameters[1], parameters[2]);
       break;
   };
 }

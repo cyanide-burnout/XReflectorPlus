@@ -29,7 +29,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <stdio.h>
 #include <time.h>
 
-#include <libutil.h>
+#include <bsd/libutil.h>
 #include <libconfig.h>
 #include <libircclient/libircclient.h>
 
@@ -37,6 +37,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "DStar.h"
 #include "DDBClient.h"
+#include "MySQLStore.h"
+#include "SQLiteStore.h"
 #include "StoreFactory.h"
 #include "ReportTools.h"
 #include "StringTools.h"
@@ -152,7 +154,7 @@ int main(int argc, const char* argv[])
   const char* name = NULL;
   const char* type = NULL;
   const char* path = NULL;
-  long port = DDB_DEFAULT_PORT;
+  int port = DDB_DEFAULT_PORT;
 
   config_setting_t* setting = config_root_setting(&configuration);
   config_setting_lookup_string(setting, "server", &server);

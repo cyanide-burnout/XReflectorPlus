@@ -20,25 +20,88 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "MySQLStore.h"
 #include "DStarTools.h"
 #include <arpa/inet.h>
+#include <stdarg.h>
 #include <string.h>
 #include <syslog.h>
 #include <stdio.h>
+
+#define HOST_ADDRESS_LENGTH     16
+#define MAXIMUM_NICK_LENGTH     32
+
+#define FIND_ROUTE              0
+#define VERIFY_ADDRESS          1
+#define RESET_USER_STATE        2
+#define STORE_USER_SERVER       3
+#define STORE_USER              4
+#define REMOVE_USER             5
+#define FIND_ACTIVE_BOT         6
+#define GET_LAST_MODIFIED_DATE  7
+#define GET_COUNT_BY_DATE       8
+#define STORE_TABLE_DATA        9
 
 MySQLStore::MySQLStore(const char* file) :
   connection(NULL),
   onReport(NULL)
 {
+  const char* queries[] =
+  {
+    // FIND_ROUTE
+    "SELECT Repeater, Gateway, Address FROM Routes"
+    "  WHERE Call = ?",
+    // VERIFY_ADDRESS
+    "SELECT COUNT(Call) FROM Gateways"
+    "  WHERE Address = ?",
+    // RESET_USER_STATE
+    "UPDATE Users SET `Enabled` = 0",
+    // STORE_USER_SERVER
+    "UPDATE Users SET `Server` = ?"
+    "  WHERE (`Nick` = ?)",
+    // STORE_USER
+    "REPLACE INTO Users (`Nick`, `Name`, `Address`)"
+    "  VALUES (?, ?, ?)",
+    // REMOVE_USER
+    "UPDATE Users"
+    "  SET `Enabled` = 0 WHERE `Nick` = ?",
+    // FIND_ACTIVE_BOT
+    "    SELECT `Nick`, `Date`, 1 AS `Priority` FROM Users"
+    "      WHERE (`Server` = ?) AND (`Nick` LIKE 's-%') AND (`Enabled` = 1)"
+    "  UNION"
+    "    SELECT `Nick`, `Date`, 2 AS `Priority` FROM Users"
+    "      WHERE (`Nick` LIKE 's-%') AND (`Enabled` = 1)"
+    "  ORDER BY `Priority` ASC, `Date` DESC"
+    "  LIMIT 1",
+    // GET_LAST_MODIFIED_DATE
+    "SELECT MAX(`Date`) FROM Tables"
+    "  WHERE `Table` = ?",
+    // GET_COUNT_BY_DATE
+    "SELECT COUNT(*) FROM Tables"
+    "  WHERE (`Table` = ?) AND (`Date` = ?)",
+    // STORE_TABLE_DATA
+    "REPLACE INTO Tables (`Table`, `Date`, `Call1`, `Call2`)"
+    "  VALUES (?, ?, ?, ?)"
+  };
+
   connection = mysql_init(NULL);
-  
+
   mysql_options(connection, MYSQL_READ_DEFAULT_FILE, realpath(file, NULL));
   mysql_real_connect(connection, NULL, NULL, NULL, NULL, 0, NULL, CLIENT_REMEMBER_OPTIONS);
-  
+
   my_bool active = true;
   mysql_options(connection, MYSQL_OPT_RECONNECT, &active);
+
+  for (size_t index = 0; index < PREPARED_STATEMENT_COUNT; index ++)
+  {
+    const char* query = queries[index];
+    statements[index] = mysql_stmt_init(connection);
+    mysql_stmt_prepare(statements[index], query, strlen(query));
+  }
 }
 
 MySQLStore::~MySQLStore()
 {
+  for (size_t index = 0; index < PREPARED_STATEMENT_COUNT; index ++)
+    mysql_stmt_close(statements[index]);
+
   mysql_close(connection);
 }
 
@@ -64,186 +127,173 @@ bool MySQLStore::checkConnectionError()
   return false;
 }
 
-bool MySQLStore::checkConnectionError(int status)
+MYSQL_BIND* MySQLStore::bind(int count, va_list* arguments)
 {
-  if (status != 0)
+  MYSQL_BIND* bindings = NULL;
+  if (count > 0)
   {
-    const char* error = mysql_error(connection);
-    report(LOG_CRIT, "MySQL error: %s\n", error);
-    return true;
+    bindings = (MYSQL_BIND*)calloc(count, sizeof(MYSQL_BIND));
+    for (int index = 0; index < count; index ++)
+    {
+      int type = va_arg(*arguments, int);
+      bindings[index].buffer_type = (enum_field_types)type;
+      bindings[index].buffer = va_arg(*arguments, void*);
+      if ((type == MYSQL_TYPE_STRING) ||
+          (type == MYSQL_TYPE_DATETIME))
+      {
+        bindings[index].buffer_length = va_arg(*arguments, int);
+        bindings[index].length = &bindings[index].buffer_length;
+      }
+    }
   }
-  return false;
+  return bindings;
+}
+
+bool MySQLStore::execute(int index, int count1, int count2, ...)
+{
+  bool result = true;
+  MYSQL_STMT* statement = statements[index];
+
+  va_list arguments;
+  va_start(arguments, count2);
+  MYSQL_BIND* parameters = bind(count1, &arguments);
+  MYSQL_BIND* columns = bind(count2, &arguments);
+  va_end(arguments);
+
+  if ((parameters && mysql_stmt_bind_param(statement, parameters)) ||
+      (columns    && mysql_stmt_bind_result(statement, columns))   ||
+                     mysql_stmt_execute(statement)                 ||
+      (columns    && mysql_stmt_store_result(statement)))
+  {
+    const char* error = mysql_stmt_error(statement);
+    report(LOG_CRIT, "MySQL error: %s\n", error);
+    result = false;
+  }
+
+  if (result && columns)
+  {
+    result = !mysql_stmt_fetch(statement);
+    mysql_stmt_free_result(statement);
+  }
+
+  free(columns);
+  free(parameters);
+  return result;
 }
 
 bool MySQLStore::findRoute(const char* call, struct DStarRoute* route, struct in_addr* address)
 {
   bool outcome = false;
+
   char filter[LONG_CALLSIGN_LENGTH + 1];
   CopyDStarCall(call, filter, NULL, COPY_MAKE_STRING);
 
-  char* query = NULL;
-  asprintf(&query,
-    "SELECT Repeater, Gateway, Address FROM Routes"
-    "  WHERE Call = '%s'", filter);
+  char host[HOST_ADDRESS_LENGTH];
+  memset(host, 0, sizeof(host));
 
-  int status = mysql_query(connection, query);
-  checkConnectionError(status);
-
-  MYSQL_RES* result = mysql_store_result(connection);
-  if (result != NULL)
+  if (execute(FIND_ROUTE, 1, 3,
+        MYSQL_TYPE_STRING, filter, LONG_CALLSIGN_LENGTH,
+        MYSQL_TYPE_STRING, route->repeater2, LONG_CALLSIGN_LENGTH,
+        MYSQL_TYPE_STRING, route->repeater1, LONG_CALLSIGN_LENGTH,
+        MYSQL_TYPE_STRING, host, HOST_ADDRESS_LENGTH))
   {
-    MYSQL_ROW row = mysql_fetch_row(result);
-    if (row != NULL)
-    {
-      CopyDStarCall(call, route->yourCall, NULL, 0);
-      CopyDStarCall(row[0], route->repeater2, NULL, 0);
-      CopyDStarCall(row[1], route->repeater1, NULL, 0);
-      inet_aton(row[2], address);
-      route->repeater1[LONG_CALLSIGN_LENGTH - 1] = 'G';
-      outcome = true;
-    }
-    mysql_free_result(result);
+    inet_aton(host, address);
+    CopyDStarCall(call, route->yourCall, NULL, 0);
+    route->repeater1[LONG_CALLSIGN_LENGTH - 1] = 'G';
+    outcome = true;
   }
-  checkConnectionError();
 
-  free(query);
   return outcome;
 }
 
 bool MySQLStore::verifyAddress(const struct in_addr& address)
 {
-  bool outcome = false;
+  int outcome = 0;
   char* filter = inet_ntoa(address);
-  char* query = NULL;
-  asprintf(&query,
-    "SELECT Call FROM Gateways"
-    "  WHERE Address = '%s'", filter);
 
-  int status = mysql_query(connection, query);
-  checkConnectionError(status);
+  execute(VERIFY_ADDRESS, 1, 1,
+    MYSQL_TYPE_STRING, filter, strlen(filter),
+    MYSQL_TYPE_LONG, &outcome);
 
-  MYSQL_RES* result = mysql_store_result(connection);
-  if (result != NULL)
-  {
-    MYSQL_ROW row = mysql_fetch_row(result);
-    outcome = (row != NULL);
-    mysql_free_result(result);
-  }
-  checkConnectionError();
-
-  free(query);
   return outcome;
 }
 
 void MySQLStore::resetUserState()
 {
-  const char* query = "UPDATE Users SET `Enabled` = 0";
-  int status = mysql_query(connection, query);
-  checkConnectionError(status);
+  execute(RESET_USER_STATE, 0, 0);
+}
+
+void MySQLStore::storeUserServer(const char* nick, const char* server)
+{
+  execute(STORE_USER_SERVER, 2, 0,
+    MYSQL_TYPE_STRING, server, strlen(server),
+    MYSQL_TYPE_STRING, nick, strlen(nick));
 }
 
 void MySQLStore::storeUser(const char* nick, const char* name, const char* address)
 {
-  char* query = NULL;
-  asprintf(&query,
-    "REPLACE INTO Users (`Nick`, `Name`, `Address`)"
-    "  VALUES ('%s', '%s', '%s')", nick, name, address);
-  int status = mysql_query(connection, query);
-  checkConnectionError(status);
-  free(query);
+  execute(STORE_USER, 3, 0,
+    MYSQL_TYPE_STRING, nick, strlen(nick),
+    MYSQL_TYPE_STRING, name, strlen(name),
+    MYSQL_TYPE_STRING, address, strlen(address));
 }
 
 void MySQLStore::removeUser(const char* nick)
 {
-  char* query = NULL;
-  asprintf(&query,
-    "UPDATE Users"
-    "  SET `Enabled` = 0 WHERE `Nick` = '%s'", nick);
-  int status = mysql_query(connection, query);
-  checkConnectionError(status);
-  free(query);
+  execute(REMOVE_USER, 1, 0,
+    MYSQL_TYPE_STRING, nick, strlen(nick));
 }
 
-char* MySQLStore::findActiveBot()
+char* MySQLStore::findActiveBot(const char* server)
 {
-  char* bot = NULL;
-  const char* query =
-    "SELECT `Nick` FROM Users"
-    "  WHERE (`Nick` LIKE 's-%') AND (`Enabled` = 1)"
-    "  ORDER BY `Date` DESC LIMIT 1";
+  char* bot = (char*)calloc(MAXIMUM_NICK_LENGTH, 1);
 
-  int status = mysql_query(connection, query);
-  checkConnectionError(status);
-
-  MYSQL_RES* result = mysql_store_result(connection);
-  if (result != NULL)
+  if (!execute(FIND_ACTIVE_BOT, 1, 1,
+        MYSQL_TYPE_STRING, server, strlen(server),
+        MYSQL_TYPE_STRING, bot, MAXIMUM_NICK_LENGTH))
   {
-    MYSQL_ROW row = mysql_fetch_row(result);
-    if ((row != NULL) && (row[0] != NULL))
-      bot = strdup(row[0]);
-    mysql_free_result(result);
+    free(bot);
+    bot = NULL;
   }
-  checkConnectionError();
+
   return bot;
 }
 
 void MySQLStore::getLastModifiedDate(int table, char* date)
 {
-  char* query = NULL;
-  asprintf(&query,
-    "SELECT MAX(`Date`) FROM Tables"
-    "  WHERE `Table` = %d", table);
+  MYSQL_TIME time;
 
-  int status = mysql_query(connection, query);
-  checkConnectionError(status);
-
-  MYSQL_RES* result = mysql_store_result(connection);
-  if (result != NULL)
-  {
-    char* column = NULL;
-    MYSQL_ROW row = mysql_fetch_row(result);
-    if ((row != NULL) && (row[0] != NULL))
-      strncpy(date, row[0], DDB_DATE_LENGTH);
-    mysql_free_result(result);
-  }
-  checkConnectionError();
-
-  free(query);
+  if (execute(GET_LAST_MODIFIED_DATE, 1, 1,
+        MYSQL_TYPE_LONG, &table,
+        MYSQL_TYPE_DATETIME, &time, sizeof(time)))
+    sprintf(date, "%04d-%02d-%02d %02d:%02d:%02d",
+      time.year, time.month, time.day, 
+      time.hour, time.minute, time.second);
 }
 
 size_t MySQLStore::getCountByDate(int table, const char* date)
 {
-  size_t count = 0;
-  char* query = NULL;
-  asprintf(&query,
-    "SELECT COUNT(*) FROM Tables"
-    "  WHERE (`Table` = %d) AND (`Date` = '%s')", table, date);
+  int count = 0;
 
-  int status = mysql_query(connection, query);
-  checkConnectionError(status);
+  execute(GET_COUNT_BY_DATE, 2, 1,
+    MYSQL_TYPE_LONG, &table,
+    MYSQL_TYPE_STRING, date, strlen(date),
+    MYSQL_TYPE_LONG, &count);
 
-  MYSQL_RES* result = mysql_store_result(connection);
-  if (result != NULL)
-  {
-    char* column = NULL;
-    MYSQL_ROW row = mysql_fetch_row(result);
-    if (row != NULL)
-       count = atoi(row[0]);
-    mysql_free_result(result);
-  }
-  checkConnectionError();
-
-  free(query);
   return count;
 }
 
 void MySQLStore::storeTableData(int table, const char* date, const char* call1, const char* call2)
 {
-  char* query = NULL;
-  asprintf(&query,
-    "REPLACE INTO Tables (`Table`, `Date`, `Call1`, `Call2`)"
-    "  VALUES (%d, '%s', '%s', '%s')", table, date, call1, call2);
-  int status = mysql_query(connection, query);
-  checkConnectionError(status);
-  free(query);
+  MYSQL_TIME time;
+  memset(&time, 0, sizeof(time));
+  sscanf(date, "%04d-%02d-%02d %02d:%02d:%02d",
+    &time.year, &time.month, &time.day, 
+    &time.hour, &time.minute, &time.second);
+
+  execute(STORE_TABLE_DATA, 4, 0,
+    MYSQL_TYPE_LONG, &table,
+    MYSQL_TYPE_DATETIME, &time, sizeof(time),
+    MYSQL_TYPE_STRING, call1, LONG_CALLSIGN_LENGTH,
+    MYSQL_TYPE_STRING, call2, LONG_CALLSIGN_LENGTH);
 }

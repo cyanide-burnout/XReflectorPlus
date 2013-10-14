@@ -52,12 +52,14 @@ class DDBClient
       public:
 
         virtual bool findRoute(const char* call, struct DStarRoute* route, struct in_addr* address) = 0;
+        virtual bool verifyAddress(const struct in_addr& address) = 0;
 
         virtual void resetUserState() = 0;
+        virtual void storeUserServer(const char* nick, const char* server) = 0;
         virtual void storeUser(const char* nick, const char* name, const char* address) = 0;
         virtual void removeUser(const char* nick) = 0;
 
-        virtual char* findActiveBot() = 0;
+        virtual char* findActiveBot(const char* server) = 0;
 
         virtual void getLastModifiedDate(int table, char* date) = 0;
         virtual size_t getCountByDate(int table, const char* date) = 0;
@@ -96,6 +98,7 @@ class DDBClient
     Store* store;
 
     char* server;
+    char* alias;
     char* name;
     char* password;
     char* version;
@@ -115,7 +118,9 @@ class DDBClient
 
     char* generateNick();
     void sendCommand(const char* command);
+    void setConnectedServer(const char* server);
 
+    void storeUserServer(const char* nick, const char* server);
     void storeUser(const char* nick, const char* name, const char* address);
     void removeUser(const char* nick);
 
@@ -125,6 +130,7 @@ class DDBClient
 
     static void handleConnect(irc_session_t* session, const char* event, const char* origin, const char** parameters, unsigned int count);
     static void handleJoin(irc_session_t* session, const char* event, const char* origin, const char** parameters, unsigned int count);
+    static void handleQuit(irc_session_t* session, const char* event, const char* origin, const char** parameters, unsigned int count);
     static void handlePrivateMessage(irc_session_t* session, const char* event, const char* origin, const char** parameters, unsigned int count);
     static void handleEventCode(irc_session_t* session, unsigned int event, const char* origin, const char** parameters, unsigned int count);
 };
